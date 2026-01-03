@@ -133,7 +133,8 @@ namespace pipeann {
     size_t pos = 0;
 
     for (auto iter : best_vec) {
-      if (deletion_set->find(iter.first) == deletion_set->end()) {
+      if (deletion_sets[0].find(iter.first) == deletion_sets[0].end() &&
+          deletion_sets[1].find(iter.first) == deletion_sets[1].end()) {
         tags[pos] = iter.first;
         distances[pos] = iter.second;
         pos++;
