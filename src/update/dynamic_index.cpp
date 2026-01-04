@@ -41,8 +41,6 @@ namespace pipeann {
       exit(-1);
     }
 
-    this->active_del[0] = true;
-    this->active_del[1] = false;
     this->_dist_metric = dist_metric;
     this->journal = new pipeann::Journal<TagT>(disk_prefix_out + "_journal");
 
@@ -133,7 +131,8 @@ namespace pipeann {
     size_t pos = 0;
 
     for (auto iter : best_vec) {
-      if (deletion_set->find(iter.first) == deletion_set->end()) {
+      if (deletion_sets[0].find(iter.first) == deletion_sets[0].end() &&
+          deletion_sets[1].find(iter.first) == deletion_sets[1].end()) {
         tags[pos] = iter.first;
         distances[pos] = iter.second;
         pos++;
@@ -150,10 +149,6 @@ namespace pipeann {
     std::unique_lock<std::shared_timed_mutex> lock(delete_lock);
     journal->append(pipeann::TxType::kDelete, tag);
 
-    if (active_del[active_delete_set].load() == false) {
-      LOG(ERROR) << "Active deletion set indicated as _deletion_set_" << active_delete_set
-                 << " but it cannot accept deletions";
-    }
     if (deletion_sets[active_delete_set].find(tag) == deletion_sets[active_delete_set].end()) {
       deletion_sets[active_delete_set].insert(tag);
       deleted_tags[active_delete_set].push_back(tag);
@@ -161,28 +156,25 @@ namespace pipeann {
   }
 
   template<typename T, typename TagT>
-  void DynamicSSDIndex<T, TagT>::save_del_set() {
-    int nxt_idx = 1 - active_delete_set, cur_idx = active_delete_set;
-    std::unique_lock<std::shared_timed_mutex> lock(delete_lock);
-    deletion_sets[nxt_idx].clear();
-    deleted_tags[nxt_idx].clear();
-    bool expected_active = false;
-    if (active_del[nxt_idx].compare_exchange_strong(expected_active, true)) {
-      LOG(INFO) << "Cleared deletion set " << nxt_idx << " - ready to accept new points";
-    } else {
-      LOG(INFO) << "Failed to clear deletion set " << nxt_idx;
-    }
-    active_delete_set = nxt_idx;
-    active_del[cur_idx].store(false);
-  }
-
-  template<typename T, typename TagT>
   void DynamicSSDIndex<T, TagT>::final_merge(const uint32_t &nthreads, const uint32_t &n_sampled_nbrs) {
     std::unique_lock<std::shared_timed_mutex> lock(_merge_lock);  // only one merge at a time
     // _disk_index_in -> _disk_index_out
-    save_del_set();
+    // Before merge, only the active deletion set contains deletes.
+    {
+      std::unique_lock<std::shared_timed_mutex> lock(delete_lock);
+      active_delete_set = !active_delete_set;
+    }
+    // During merge, both deletion_sets contain deletes.
     pipeann::Timer timer;
     merge(nthreads, n_sampled_nbrs);
+
+    // After merge, clear the inactive deletion set (as they are already merged).
+    // Only concurrent search & delete; no concurrent inserts as _merge_lock is held.
+    {
+      std::unique_lock<std::shared_timed_mutex> lock(delete_lock);
+      deletion_sets[!active_delete_set].clear();
+      deleted_tags[!active_delete_set].clear();
+    }
 
     // TODO(gh): do we really need to reload disk index?
     std::swap(_disk_index_prefix_in, _disk_index_prefix_out);
