@@ -42,7 +42,6 @@ namespace pipeann {
                      const uint32_t &n_sampled_nbrs = std::numeric_limits<uint32_t>::max());
 
    private:
-    void save_del_set();
     void merge(const uint32_t &nthreads, const uint32_t &n_sampled_nbrs);
 
    public:
@@ -59,12 +58,10 @@ namespace pipeann {
     pipeann::IndexBuildParameters _paras_mem;
     pipeann::IndexBuildParameters _paras_disk;
 
-    int active_index = 0;                 // reflects value of writable index
     int active_delete_set = 0;            // reflects active _deletion_set
     std::shared_timed_mutex delete_lock;  // lock to access _deletion_set
     tsl::robin_set<TagT> deletion_sets[2];
     std::vector<TagT> deleted_tags[2];
-    std::atomic_bool active_del[2];
 
     std::shared_timed_mutex _merge_lock;
 
