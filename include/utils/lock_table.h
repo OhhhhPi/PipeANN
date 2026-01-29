@@ -131,6 +131,10 @@ namespace pipeann {
       }
     }
     ~LockTable() {
+      for (size_t i = 0; i < size_; i++) {
+        pthread_rwlock_destroy(&locks_[i]);
+      }
+      delete[] locks_;
     }
 
     inline pthread_rwlock_t *rdlock(uint32_t key) {
