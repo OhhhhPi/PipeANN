@@ -5,6 +5,33 @@
 #include <cstddef>
 #include <cstdint>
 
+// _mm512_popcnt_epi64 requires AVX512VPOPCNTDQ, which is absent on e.g. Xeon
+// Scalable Gen 2 (Cascade Lake).  When not available, emulate it with a nibble
+// lookup table using AVX512BW instructions (_mm512_shuffle_epi8 + _mm512_sad_epu8),
+// both of which Cascade Lake does support.
+#ifdef USE_AVX512_VPOPCNTDQ
+#define MM512_POPCNT_EPI64(v) _mm512_popcnt_epi64(v)
+#else
+inline __m512i _mm512_popcnt_epi64_compat(__m512i v) {
+    // clang-format off
+    const __m512i lookup = _mm512_set_epi8(
+        4,3,3,2,3,2,2,1,3,2,2,1,2,1,1,0,
+        4,3,3,2,3,2,2,1,3,2,2,1,2,1,1,0,
+        4,3,3,2,3,2,2,1,3,2,2,1,2,1,1,0,
+        4,3,3,2,3,2,2,1,3,2,2,1,2,1,1,0
+    );
+    // clang-format on
+    const __m512i low_mask = _mm512_set1_epi8(0x0f);
+    __m512i lo  = _mm512_and_si512(v, low_mask);
+    __m512i hi  = _mm512_and_si512(_mm512_srli_epi16(v, 4), low_mask);
+    __m512i cnt = _mm512_add_epi8(_mm512_shuffle_epi8(lookup, lo),
+                                  _mm512_shuffle_epi8(lookup, hi));
+    // Sum the 8 byte-popcounts within each 64-bit lane.
+    return _mm512_sad_epu8(cnt, _mm512_setzero_si512());
+}
+#define MM512_POPCNT_EPI64(v) _mm512_popcnt_epi64_compat(v)
+#endif
+
 template <uint32_t b_query>
 inline float warmup_ip_x0_q(
     const uint64_t* data,   // pointer to data blocks (each 64 bits)
@@ -33,9 +60,9 @@ inline float warmup_ip_x0_q(
         // Load eight 64-bit data blocks into x_vec.
         __m512i x_vec = _mm512_loadu_si512(reinterpret_cast<const __m512i*>(data + i));
 
-        // Compute popcount for each 64-bit block in x_vec using the AVX512 VPOPCNTDQ
-        // instruction. (Ensure you compile with the proper flags for VPOPCNTDQ.)
-        __m512i popcnt_x_vec = _mm512_popcnt_epi64(x_vec);
+        // Compute popcount for each 64-bit block in x_vec.
+        // Uses VPOPCNTDQ if available, otherwise falls back to nibble-lookup.
+        __m512i popcnt_x_vec = MM512_POPCNT_EPI64(x_vec);
         ppc_vec = _mm512_add_epi64(ppc_vec, popcnt_x_vec);
 
         // For accumulating the weighted popcounts per block.
@@ -59,7 +86,7 @@ inline float warmup_ip_x0_q(
             // Compute bitwise AND of data blocks and corresponding query words.
             __m512i and_vec = _mm512_and_si512(x_vec, q_vec);
             // Compute popcount on each lane.
-            __m512i popcnt_and = _mm512_popcnt_epi64(and_vec);
+            __m512i popcnt_and = MM512_POPCNT_EPI64(and_vec);
 
             // Multiply by the weighting factor (1 << j) for this query position.
             const uint64_t shift = 1ULL << j;

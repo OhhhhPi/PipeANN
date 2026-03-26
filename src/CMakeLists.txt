@@ -5,7 +5,9 @@ add_library(${PROJECT_NAME} ${PROJECT_CPP})
 
 # python module.
 # pip install "pybind11[global]"
-find_package(pybind11 REQUIRED)
-file(GLOB PYBIND_CPP python/*.cpp)
-pybind11_add_module(C ${PYBIND_CPP})
-target_link_libraries(C PRIVATE pipeann)
+if(BUILD_PYTHON_INTERFACE)
+    find_package(pybind11 REQUIRED)
+    file(GLOB PYBIND_CPP python/*.cpp)
+    pybind11_add_module(C ${PYBIND_CPP})
+    target_link_libraries(C PRIVATE pipeann)
+endif()
